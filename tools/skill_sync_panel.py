@@ -174,12 +174,12 @@ APP_HTML = r"""<!doctype html>
     }
     .project-head {
       display: grid;
-      grid-template-columns: 24px 1fr;
+      grid-template-columns: 24px 1fr auto;
       gap: 8px;
+      align-items: start;
       padding: 11px 12px;
       background: var(--soft);
       border-bottom: 1px solid var(--line);
-      cursor: pointer;
     }
     .project-head input, .skill-row input { margin-top: 3px; }
     .project-head strong { display: block; font-size: 15px; }
@@ -190,6 +190,14 @@ APP_HTML = r"""<!doctype html>
       line-height: 1.45;
       margin-top: 3px;
     }
+    .project-toggle {
+      align-self: center;
+      min-width: 54px;
+      padding: 6px 10px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .project.collapsed .skills-list { display: none; }
     .skill-row {
       display: grid;
       grid-template-columns: 24px 1fr;
@@ -346,10 +354,20 @@ function refreshSelectionState() {
     const checked = children.filter(input => input.checked).length;
     projectBox.checked = checked > 0 && checked === children.length;
     projectBox.indeterminate = checked > 0 && checked < children.length;
+    const count = document.querySelector(`.selected-count[data-group="${group}"]`);
+    if (count) count.textContent = `已选 ${checked}/${children.length}`;
   }
 }
 
 function bindSelection() {
+  for (const toggle of document.querySelectorAll('.project-toggle')) {
+    toggle.addEventListener('click', () => {
+      const project = toggle.closest('.project');
+      const collapsed = project.classList.toggle('collapsed');
+      toggle.textContent = collapsed ? '展开' : '收起';
+      toggle.setAttribute('aria-expanded', String(!collapsed));
+    });
+  }
   for (const box of document.querySelectorAll('.project-box')) {
     box.addEventListener('change', () => {
       for (const child of document.querySelectorAll(`.skill-box[data-group="${box.dataset.group}"]`)) {
@@ -375,7 +393,7 @@ async function loadStatus() {
     for (const group of data.groups) {
       totalSkillCount += group.skills.length;
       const project = document.createElement('div');
-      project.className = 'project';
+      project.className = 'project collapsed';
       const skillRows = group.skills.map(skill => `
         <label class="skill-row">
           <input class="skill-box" type="checkbox" value="${skill.name}" data-group="${group.key}" checked>
@@ -383,11 +401,14 @@ async function loadStatus() {
         </label>
       `).join('');
       project.innerHTML = `
-        <label class="project-head">
+        <div class="project-head">
           <input class="project-box" type="checkbox" data-group="${group.key}" checked>
-          <div><strong>${group.label}</strong><span>${group.description} · 本地 ${group.local_count}/${group.total_count} 个 skill</span></div>
-        </label>
-        ${skillRows}
+          <div><strong>${group.label}</strong><span>${group.description} · 本地 ${group.local_count}/${group.total_count} 个 skill · <span class="selected-count" data-group="${group.key}">已选 ${group.skills.length}/${group.skills.length}</span></span></div>
+          <button class="project-toggle" type="button" aria-expanded="false">展开</button>
+        </div>
+        <div class="skills-list">
+          ${skillRows}
+        </div>
       `;
       groupsEl.appendChild(project);
     }
