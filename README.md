@@ -24,13 +24,13 @@ gh auth login
 Windows：
 
 ```text
-双击 启动同步面板-Windows.cmd
+双击 start-panel-windows.cmd
 ```
 
 macOS：
 
 ```text
-第一次可能需要右键 启动同步面板-Mac.command，选择“打开”。
+第一次可能需要右键 start-panel-mac.command，选择“打开”。
 ```
 
 打开后会自动启动本地网页面板：
