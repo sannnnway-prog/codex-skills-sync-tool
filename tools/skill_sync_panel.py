@@ -2,8 +2,8 @@
 """
 Local button panel for syncing Codex skills with GitHub via GitHub CLI.
 
-It intentionally uses only Python's standard library plus the `gh` executable,
-so the same folder can be shared with Windows and macOS teammates.
+The tool uses only Python's standard library plus the `gh` executable, so the
+same folder can be shared with Windows and macOS teammates.
 """
 
 from __future__ import annotations
@@ -13,10 +13,8 @@ import datetime as dt
 import hashlib
 import json
 import os
-import posixpath
 import shutil
 import subprocess
-import sys
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -107,6 +105,7 @@ APP_HTML = r"""<!doctype html>
       --text: #20242a;
       --muted: #687180;
       --line: #d9dee7;
+      --soft: #f8fafc;
       --accent: #0d7c66;
       --accent-2: #2f5fbd;
       --warn: #a15c00;
@@ -139,10 +138,10 @@ APP_HTML = r"""<!doctype html>
     }
     main {
       display: grid;
-      grid-template-columns: minmax(260px, 360px) 1fr;
+      grid-template-columns: minmax(320px, 420px) 1fr;
       gap: 18px;
       padding: 18px;
-      max-width: 1180px;
+      max-width: 1240px;
       margin: 0 auto;
     }
     section, aside {
@@ -154,27 +153,64 @@ APP_HTML = r"""<!doctype html>
     aside {
       padding: 14px;
       align-self: start;
+      max-height: calc(100vh - 110px);
+      overflow: auto;
     }
-    .group {
+    .select-tools {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .select-tools button {
+      flex: 1;
+      padding: 8px 10px;
+      font-size: 13px;
+    }
+    .project {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      margin-bottom: 10px;
+      overflow: hidden;
+    }
+    .project-head {
       display: grid;
       grid-template-columns: 24px 1fr;
-      gap: 10px;
-      padding: 12px;
-      border-radius: 7px;
-      border: 1px solid transparent;
+      gap: 8px;
+      padding: 11px 12px;
+      background: var(--soft);
+      border-bottom: 1px solid var(--line);
       cursor: pointer;
     }
-    .group + .group { margin-top: 8px; }
-    .group:hover, .group.active {
-      border-color: #b9c6d8;
-      background: #f8fafc;
+    .project-head input, .skill-row input { margin-top: 3px; }
+    .project-head strong { display: block; font-size: 15px; }
+    .project-head span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      margin-top: 3px;
     }
-    .group input { margin-top: 3px; }
-    .group strong { display: block; font-size: 15px; }
-    .group span { display: block; color: var(--muted); font-size: 12px; line-height: 1.45; margin-top: 4px; }
-    .workspace {
-      padding: 16px;
+    .skill-row {
+      display: grid;
+      grid-template-columns: 24px 1fr;
+      gap: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+      min-height: 38px;
     }
+    .skill-row + .skill-row { border-top: 1px solid #eef1f5; }
+    .skill-row:hover { background: #fbfcfe; }
+    .skill-row code {
+      font: 13px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      word-break: break-all;
+    }
+    .skill-row span {
+      color: var(--muted);
+      display: block;
+      font-size: 12px;
+      margin-top: 2px;
+    }
+    .workspace { padding: 16px; }
     .toolbar {
       display: flex;
       flex-wrap: wrap;
@@ -231,8 +267,9 @@ APP_HTML = r"""<!doctype html>
     .ok { color: var(--accent); }
     .warn { color: var(--warn); }
     .bad { color: var(--bad); }
-    @media (max-width: 820px) {
+    @media (max-width: 860px) {
       main { grid-template-columns: 1fr; }
+      aside { max-height: none; }
       .status-grid { grid-template-columns: 1fr; }
       header { padding: 18px; }
     }
@@ -241,14 +278,14 @@ APP_HTML = r"""<!doctype html>
 <body>
   <header>
     <h1>Codex Skills 同步面板</h1>
-    <div class="sub">选择要同步的项目，点击按钮即可在 GitHub 和本地 Codex Skills 之间同步。上传前会检查远端是否被别人更新过；下载前会备份本地目录。</div>
+    <div class="sub">可以按单个 skill 勾选同步，也可以按项目或全部一键选择。下载前会备份本地版本；上传前会检查 GitHub 是否已有同事更新，避免覆盖。</div>
   </header>
   <main>
     <aside>
-      <label class="group active" data-group="all">
-        <input type="radio" name="group" value="all" checked>
-        <div><strong>全部项目</strong><span>依次同步 SEO 优化、Blog 创作、SEO 页面工厂。</span></div>
-      </label>
+      <div class="select-tools">
+        <button id="selectAll" type="button">全选</button>
+        <button id="clearAll" type="button">清空</button>
+      </div>
       <div id="groups"></div>
       <div class="hint">本面板需要电脑已登录 GitHub CLI：<code>gh auth login</code>。日常使用不需要手写命令。</div>
     </aside>
@@ -261,10 +298,10 @@ APP_HTML = r"""<!doctype html>
       <div class="status-grid">
         <div class="metric"><b>GitHub 登录</b><span id="auth">检查中</span></div>
         <div class="metric"><b>本地 Skills 目录</b><span id="root">检查中</span></div>
-        <div class="metric"><b>当前选择</b><span id="selected">全部项目</span></div>
+        <div class="metric"><b>已选择</b><span id="selected">0 个 skill</span></div>
       </div>
-      <div class="log" id="log">面板已打开。先点“状态检查”，确认 GitHub 登录和本地目录正常。</div>
-      <div class="hint">如上传时提示远端冲突，说明同事已经更新过相关 skill。先点“从 GitHub 更新到本地”，面板会自动备份你本地旧版本，再按团队约定合并内容。</div>
+      <div class="log" id="log">面板已打开。可以先点“状态检查”，确认 GitHub 登录和本地目录正常。</div>
+      <div class="hint">如果你本地和 GitHub 同时更新了同一个文件，面板会停止上传。先下载会备份你的本地版本，再用 GitHub 最新版覆盖工作目录；需要保留两边内容时，请从备份里合并后再上传。</div>
     </section>
   </main>
 <script>
@@ -274,7 +311,7 @@ const rootEl = document.getElementById('root');
 const selectedEl = document.getElementById('selected');
 const groupsEl = document.getElementById('groups');
 let busy = false;
-let groupLabels = { all: '全部项目' };
+let totalSkillCount = 0;
 
 function appendLog(text) {
   const now = new Date().toLocaleTimeString();
@@ -282,13 +319,10 @@ function appendLog(text) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-function selectedGroup() {
-  return document.querySelector('input[name="group"]:checked').value;
-}
-
 function setBusy(next) {
   busy = next;
   for (const btn of document.querySelectorAll('button')) btn.disabled = next;
+  for (const input of document.querySelectorAll('input')) input.disabled = next;
 }
 
 async function api(path, body) {
@@ -299,6 +333,36 @@ async function api(path, body) {
   return data;
 }
 
+function selectedSkills() {
+  return Array.from(document.querySelectorAll('.skill-box:checked')).map(input => input.value);
+}
+
+function refreshSelectionState() {
+  const selected = selectedSkills();
+  selectedEl.textContent = `${selected.length} / ${totalSkillCount} 个 skill`;
+  for (const projectBox of document.querySelectorAll('.project-box')) {
+    const group = projectBox.dataset.group;
+    const children = Array.from(document.querySelectorAll(`.skill-box[data-group="${group}"]`));
+    const checked = children.filter(input => input.checked).length;
+    projectBox.checked = checked > 0 && checked === children.length;
+    projectBox.indeterminate = checked > 0 && checked < children.length;
+  }
+}
+
+function bindSelection() {
+  for (const box of document.querySelectorAll('.project-box')) {
+    box.addEventListener('change', () => {
+      for (const child of document.querySelectorAll(`.skill-box[data-group="${box.dataset.group}"]`)) {
+        child.checked = box.checked;
+      }
+      refreshSelectionState();
+    });
+  }
+  for (const box of document.querySelectorAll('.skill-box')) {
+    box.addEventListener('change', refreshSelectionState);
+  }
+}
+
 async function loadStatus() {
   setBusy(true);
   try {
@@ -307,16 +371,28 @@ async function loadStatus() {
     authEl.className = data.authenticated ? 'ok' : 'bad';
     rootEl.textContent = data.skill_root;
     groupsEl.innerHTML = '';
-    groupLabels = { all: '全部项目' };
+    totalSkillCount = 0;
     for (const group of data.groups) {
-      groupLabels[group.key] = group.label;
-      const label = document.createElement('label');
-      label.className = 'group';
-      label.dataset.group = group.key;
-      label.innerHTML = `<input type="radio" name="group" value="${group.key}"><div><strong>${group.label}</strong><span>${group.repo} · 本地 ${group.local_count}/${group.total_count} 个 skill</span></div>`;
-      groupsEl.appendChild(label);
+      totalSkillCount += group.skills.length;
+      const project = document.createElement('div');
+      project.className = 'project';
+      const skillRows = group.skills.map(skill => `
+        <label class="skill-row">
+          <input class="skill-box" type="checkbox" value="${skill.name}" data-group="${group.key}" checked>
+          <div><code>${skill.name}</code><span>${skill.local ? '本地已安装' : '本地未找到'} · ${group.repo}</span></div>
+        </label>
+      `).join('');
+      project.innerHTML = `
+        <label class="project-head">
+          <input class="project-box" type="checkbox" data-group="${group.key}" checked>
+          <div><strong>${group.label}</strong><span>${group.description} · 本地 ${group.local_count}/${group.total_count} 个 skill</span></div>
+        </label>
+        ${skillRows}
+      `;
+      groupsEl.appendChild(project);
     }
-    bindGroups();
+    bindSelection();
+    refreshSelectionState();
     appendLog(data.summary);
   } catch (err) {
     appendLog(`状态检查失败：${err.message}`);
@@ -325,24 +401,16 @@ async function loadStatus() {
   }
 }
 
-function bindGroups() {
-  for (const label of document.querySelectorAll('.group')) {
-    label.addEventListener('click', () => {
-      setTimeout(() => {
-        for (const item of document.querySelectorAll('.group')) item.classList.remove('active');
-        label.classList.add('active');
-        selectedEl.textContent = groupLabels[selectedGroup()] || selectedGroup();
-      }, 0);
-    });
-  }
-}
-
 async function runAction(action) {
-  const group = selectedGroup();
+  const skills = selectedSkills();
+  if (!skills.length) {
+    appendLog('请至少勾选一个 skill。');
+    return;
+  }
   setBusy(true);
-  appendLog(`${action === 'pull' ? '开始从 GitHub 更新到本地' : '开始上传本地到 GitHub'}：${groupLabels[group] || group}`);
+  appendLog(`${action === 'pull' ? '开始从 GitHub 更新到本地' : '开始上传本地到 GitHub'}：${skills.length} 个 skill`);
   try {
-    const data = await api(`/api/${action}`, { group });
+    const data = await api(`/api/${action}`, { skills });
     appendLog(data.log.join('\n'));
   } catch (err) {
     appendLog(`操作失败：${err.message}`);
@@ -355,7 +423,14 @@ async function runAction(action) {
 document.getElementById('status').addEventListener('click', loadStatus);
 document.getElementById('pull').addEventListener('click', () => runAction('pull'));
 document.getElementById('push').addEventListener('click', () => runAction('push'));
-bindGroups();
+document.getElementById('selectAll').addEventListener('click', () => {
+  for (const box of document.querySelectorAll('.skill-box')) box.checked = true;
+  refreshSelectionState();
+});
+document.getElementById('clearAll').addEventListener('click', () => {
+  for (const box of document.querySelectorAll('.skill-box')) box.checked = false;
+  refreshSelectionState();
+});
 loadStatus();
 </script>
 </body>
@@ -365,6 +440,11 @@ loadStatus();
 
 def now_stamp() -> str:
     return dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def git_blob_sha(raw: bytes) -> str:
+    header = f"blob {len(raw)}\0".encode("utf-8")
+    return hashlib.sha1(header + raw).hexdigest()
 
 
 def log_line(message: str) -> None:
@@ -379,13 +459,7 @@ def run_gh(args: list[str], input_data: dict | None = None) -> dict | list | str
     if input_data is not None:
         stdin = json.dumps(input_data, ensure_ascii=False).encode("utf-8")
     try:
-        proc = subprocess.run(
-            cmd,
-            input=stdin,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
+        proc = subprocess.run(cmd, input=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     except FileNotFoundError as exc:
         raise RuntimeError("找不到 GitHub CLI，请先安装 gh：https://cli.github.com/") from exc
     stdout = proc.stdout.decode("utf-8", errors="replace")
@@ -410,6 +484,10 @@ def content_endpoint(repo: str, path: str) -> str:
     return gh_endpoint(repo, f"contents/{encoded}")
 
 
+def all_known_skills() -> set[str]:
+    return {skill for group in GROUPS.values() for skill in group["skills"]}
+
+
 def load_state() -> dict:
     if not STATE_FILE.exists():
         return {"files": {}}
@@ -428,12 +506,27 @@ def state_key(group_key: str, path: str) -> str:
     return f"{group_key}:{path}"
 
 
-def selected_groups(group_key: str) -> list[tuple[str, dict]]:
+def selected_groups_from_payload(payload: dict) -> list[tuple[str, dict]]:
+    skills = payload.get("skills")
+    if isinstance(skills, list):
+        requested = {str(skill) for skill in skills if str(skill) in all_known_skills()}
+        if not requested:
+            raise RuntimeError("请至少选择一个已纳入团队仓库的 skill。")
+        selected = []
+        for key, group in GROUPS.items():
+            group_skills = [skill for skill in group["skills"] if skill in requested]
+            if group_skills:
+                scoped = dict(group)
+                scoped["skills"] = group_skills
+                selected.append((key, scoped))
+        return selected
+
+    group_key = str(payload.get("group", "all"))
     if group_key == "all":
-        return list(GROUPS.items())
+        return [(key, dict(group)) for key, group in GROUPS.items()]
     if group_key not in GROUPS:
         raise RuntimeError(f"未知项目：{group_key}")
-    return [(group_key, GROUPS[group_key])]
+    return [(group_key, dict(GROUPS[group_key]))]
 
 
 def local_files_for_group(group: dict) -> dict[str, Path]:
@@ -460,9 +553,7 @@ def should_skip_file(path: Path) -> bool:
     lowered = path.name.lower()
     if lowered in {".env", ".env.local", ".env.production"}:
         return True
-    if lowered.endswith((".pyc", ".pyo", ".log", ".tmp")):
-        return True
-    return False
+    return lowered.endswith((".pyc", ".pyo", ".log", ".tmp"))
 
 
 def remote_tree(repo: str) -> dict[str, dict]:
@@ -484,8 +575,7 @@ def get_remote_content(repo: str, path: str) -> tuple[bytes, str | None]:
     data = run_gh(["api", content_endpoint(repo, path)])
     if not isinstance(data, dict) or data.get("type") != "file":
         raise RuntimeError(f"远端文件不可读取：{repo}/{path}")
-    content = data.get("content", "")
-    raw = base64.b64decode(content.encode("ascii"))
+    raw = base64.b64decode(data.get("content", "").encode("ascii"))
     return raw, data.get("sha")
 
 
@@ -501,11 +591,6 @@ def put_remote_content(repo: str, path: str, raw: bytes, message: str, sha: str 
     if isinstance(data, dict):
         return data.get("content", {}).get("sha")
     return None
-
-
-def delete_remote_content(repo: str, path: str, sha: str, message: str) -> None:
-    payload = {"message": message, "sha": sha, "branch": DEFAULT_BRANCH}
-    run_gh(["api", "--method", "DELETE", content_endpoint(repo, path), "--input", "-"], payload)
 
 
 def backup_skill_dir(skill: str, log: list[str]) -> None:
@@ -531,18 +616,21 @@ def pull_group(group_key: str, group: dict, state: dict, log: list[str]) -> None
     if not files:
         log.append(f"远端没有找到 {group['label']} 的 skill 文件。")
         return
+
     for skill in group["skills"]:
         if any(path.startswith(f"{skill}/") for path in files):
             backup_skill_dir(skill, log)
             skill_path = SKILL_ROOT / skill
             if skill_path.exists():
                 shutil.rmtree(skill_path)
+
     for rel_path in sorted(files):
         raw, sha = get_remote_content(repo, rel_path)
         write_local_file(rel_path, raw)
         if sha:
             state["files"][state_key(group_key, rel_path)] = {"sha": sha, "pulled_at": dt.datetime.now().isoformat()}
     log.append(f"已从 GitHub 更新 {len(files)} 个文件到 {SKILL_ROOT}")
+    log.append("提示：下载会覆盖工作目录中的已选 skill，但覆盖前已经自动备份本地旧版本。")
 
 
 def push_group(group_key: str, group: dict, state: dict, log: list[str]) -> None:
@@ -551,45 +639,58 @@ def push_group(group_key: str, group: dict, state: dict, log: list[str]) -> None
     if not local_files:
         log.append(f"本地没有找到 {group['label']} 的 skill 文件。")
         return
+
     remote_files = remote_skill_files(repo, group)
     conflicts: list[str] = []
-    for rel_path, remote_item in remote_files.items():
-        key = state_key(group_key, rel_path)
-        last_sha = state["files"].get(key, {}).get("sha")
-        remote_sha = remote_item.get("sha")
-        if last_sha and remote_sha and last_sha != remote_sha and rel_path in local_files:
-            local_hash = hashlib.sha1(local_files[rel_path].read_bytes()).hexdigest()
-            if local_hash != remote_sha:
-                conflicts.append(rel_path)
-    if conflicts:
-        preview = "\n".join(f"- {path}" for path in conflicts[:20])
-        raise RuntimeError(
-            "GitHub 上已有同事更新过这些文件，已停止上传以避免覆盖。\n"
-            "请先点“从 GitHub 更新到本地”，面板会备份你的本地版本。\n"
-            f"{preview}"
-        )
-    uploaded = 0
+    upload_plan: list[tuple[str, Path, str | None]] = []
     skipped = 0
+    skipped_remote_newer = 0
+
     for rel_path, src in sorted(local_files.items()):
         raw = src.read_bytes()
+        local_sha = git_blob_sha(raw)
         remote_sha = remote_files.get(rel_path, {}).get("sha")
-        remote_raw = None
-        if remote_sha:
-            try:
-                remote_raw, _ = get_remote_content(repo, rel_path)
-            except RuntimeError:
-                remote_raw = None
-        if remote_raw == raw:
+        last_sha = state["files"].get(state_key(group_key, rel_path), {}).get("sha")
+
+        if remote_sha == local_sha:
             skipped += 1
-            if remote_sha:
-                state["files"][state_key(group_key, rel_path)] = {"sha": remote_sha, "pushed_at": dt.datetime.now().isoformat()}
+            state["files"][state_key(group_key, rel_path)] = {"sha": remote_sha, "pushed_at": dt.datetime.now().isoformat()}
             continue
+
+        if remote_sha and not last_sha:
+            conflicts.append(f"{rel_path}（缺少同步基线，先下载备份后再合并）")
+            continue
+
+        if remote_sha and last_sha == local_sha and remote_sha != local_sha:
+            skipped_remote_newer += 1
+            continue
+
+        if remote_sha and last_sha and remote_sha != last_sha and local_sha != last_sha:
+            conflicts.append(rel_path)
+            continue
+
+        upload_plan.append((rel_path, src, remote_sha))
+
+    if conflicts:
+        preview = "\n".join(f"- {path}" for path in conflicts[:30])
+        raise RuntimeError(
+            "GitHub 和本地同时修改了这些文件，已停止上传以避免覆盖同事更新。\n"
+            "建议先点“从 GitHub 更新到本地”，面板会备份你的本地版本；然后合并备份和最新版，再上传。\n"
+            f"{preview}"
+        )
+
+    uploaded = 0
+    for rel_path, src, remote_sha in upload_plan:
+        raw = src.read_bytes()
         message = f"Sync {group['label']} from local Codex"
         new_sha = put_remote_content(repo, rel_path, raw, message, remote_sha)
         if new_sha:
             state["files"][state_key(group_key, rel_path)] = {"sha": new_sha, "pushed_at": dt.datetime.now().isoformat()}
         uploaded += 1
+
     log.append(f"已上传 {uploaded} 个文件，跳过未变化文件 {skipped} 个：{OWNER}/{repo}")
+    if skipped_remote_newer:
+        log.append(f"另有 {skipped_remote_newer} 个文件 GitHub 较新但本地未修改，已跳过，不会覆盖同事更新。")
 
 
 def do_status() -> dict:
@@ -600,15 +701,23 @@ def do_status() -> dict:
         authenticated = True
     except RuntimeError as exc:
         auth_summary = str(exc)
+
     groups = []
     for key, group in GROUPS.items():
-        local_count = sum(1 for skill in group["skills"] if (SKILL_ROOT / skill / "SKILL.md").exists())
+        skills = []
+        local_count = 0
+        for skill in group["skills"]:
+            local = (SKILL_ROOT / skill / "SKILL.md").exists()
+            local_count += int(local)
+            skills.append({"name": skill, "local": local})
         groups.append({
             "key": key,
             "label": group["label"],
+            "description": group["description"],
             "repo": f"{OWNER}/{group['repo']}",
             "local_count": local_count,
             "total_count": len(group["skills"]),
+            "skills": skills,
         })
     return {
         "ok": True,
@@ -620,10 +729,10 @@ def do_status() -> dict:
     }
 
 
-def do_pull(group_key: str) -> dict:
+def do_pull(payload: dict) -> dict:
     state = load_state()
     log: list[str] = []
-    for key, group in selected_groups(group_key):
+    for key, group in selected_groups_from_payload(payload):
         pull_group(key, group, state, log)
     save_state(state)
     for line in log:
@@ -631,10 +740,10 @@ def do_pull(group_key: str) -> dict:
     return {"ok": True, "log": log}
 
 
-def do_push(group_key: str) -> dict:
+def do_push(payload: dict) -> dict:
     state = load_state()
     log: list[str] = []
-    for key, group in selected_groups(group_key):
+    for key, group in selected_groups_from_payload(payload):
         push_group(key, group, state, log)
     save_state(state)
     for line in log:
@@ -654,7 +763,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         try:
-            if path == "/" or path == "/index.html":
+            if path in {"/", "/index.html"}:
                 raw = APP_HTML.encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -674,11 +783,10 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length).decode("utf-8") if length else "{}"
             payload = json.loads(body or "{}")
-            group = payload.get("group", "all")
             if path == "/api/pull":
-                self._json(200, do_pull(group))
+                self._json(200, do_pull(payload))
             elif path == "/api/push":
-                self._json(200, do_push(group))
+                self._json(200, do_push(payload))
             else:
                 self._json(404, {"ok": False, "error": "Not found"})
         except Exception as exc:
