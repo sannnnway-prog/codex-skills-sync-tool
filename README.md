@@ -9,6 +9,7 @@
 - SEO 优化 Skills：`sannnnway-prog/seo-optimization-skills`
 - Blog 创作 Skills：`sannnnway-prog/blog-creation-skills`
 - SEO 页面工厂 Skills：`sannnnway-prog/seo-page-factory`
+- 多语言 Skills：`sannnnway-prog/multilingual-content-skills`
 
 可以全选，也可以按项目或单个 skill 勾选后同步。
 
