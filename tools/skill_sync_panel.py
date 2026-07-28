@@ -88,6 +88,14 @@ GROUPS = {
             "openai-next-image",
         ],
     },
+    "multilingual": {
+        "label": "多语言 Skills",
+        "repo": "multilingual-content-skills",
+        "description": "多语言 SEO、本地化写作、区域市场内容、非英语 WordPress 发布流程。",
+        "skills": [
+            "kazakhstan-russian-content",
+        ],
+    },
 }
 
 
